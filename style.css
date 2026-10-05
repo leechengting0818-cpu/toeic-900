@@ -167,3 +167,23 @@ h2{font-size:20px} h3{font-size:16px}
 kbd{font-size:11px;border:1px solid var(--line);border-radius:4px;padding:0 4px;color:var(--muted)}
 .desk-only{display:none}
 @media (min-width:900px){.desk-only{display:inline}}
+
+/* v3 */
+.srs-btns{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+@media(min-width:520px){.srs-btns{grid-template-columns:repeat(4,1fr)}}
+.srs-btns .btn{flex-direction:column;gap:2px;min-height:56px;font-size:14px;line-height:1.2;padding:8px}
+.srs-btns .btn small{font-weight:600;opacity:.85;font-size:11px}
+.badge-due{display:inline-flex;min-width:20px;height:20px;padding:0 6px;border-radius:999px;background:var(--bad);color:#fff;font-size:11px;font-weight:800;align-items:center;justify-content:center;margin-left:4px}
+.dict-input{width:100%;min-height:52px;border-radius:12px;border:1.5px solid var(--line);background:var(--card);color:var(--text);padding:12px 14px;font-size:16px;font-family:inherit}
+.dict-input:focus{outline:2px solid var(--primary);outline-offset:1px}
+.diff{line-height:1.9;font-size:17px;font-weight:600;word-break:break-word}
+.diff .ok{color:var(--ok);background:var(--ok-soft);border-radius:4px;padding:0 2px}
+.diff .bad{color:var(--bad);background:var(--bad-soft);border-radius:4px;padding:0 2px;text-decoration:line-through}
+.diff .miss{color:var(--warn);background:var(--warn-soft);border-radius:4px;padding:0 2px;border-bottom:2px solid var(--warn)}
+.acc-ring{font-size:42px;font-weight:900;text-align:center;color:var(--primary)}
+.preset{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+nav.tabs button{position:relative}
+
+nav.tabs button{font-size:11px;gap:1px;padding:4px 2px}
+nav.tabs button .ic{font-size:20px}
+.badge-due{position:absolute;top:4px;right:8px;margin:0}

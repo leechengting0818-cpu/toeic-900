@@ -1,10 +1,13 @@
-# 多益 900 衝刺（v2）
+# 多益 900 衝刺（v3）
 
-靜態網頁 App：單字字卡／測驗／錯題本 + TOEIC Part 2–4 聽力（預錄神經語音）。
+靜態網頁：SRS 單字、TOEIC Part 2–4 聽力、逐句聽寫。預錄神經語音（edge-tts）。
 
-## 使用方式
-- **建議**：用靜態伺服器開啟（GitHub Pages、`npx serve`、`python3 -m http.server`）。
-- **file://**：多數瀏覽器可直接開啟 `index.html`，相對路徑音檔通常可播放；`fetch(manifest)` 可能被擋，但不影響，程式會改用預設路徑。
+## 使用
+- 開啟 https://leechengting0818-cpu.github.io/toeic-900/
+- 或本地：`python3 -m http.server` 後開啟
+- 支援加入主畫面（manifest + service worker 離線殼層）
 
-## 音檔
-`audio/` 內為 edge-tts（Microsoft 神經語音）預錄 MP3，口音含美／英／加／澳，語速對齊文獻中的多益 WPM。
+## v3 新功能
+- 間隔重複（SM-2）與「今日複習」
+- 逐句聽寫（單字例句 / Part 2–4）
+- 離線 service worker、無障礙 tab、衝刺 860+ 預設篩選

@@ -1,1 +1,2 @@
-samples/*.mp4
+screenshots/audit/
+.DS_Store

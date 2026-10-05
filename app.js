@@ -28,7 +28,91 @@ var S = {
   days: store.get('days',{}),        // YYYY-MM-DD -> 活動次數
   settings: store.get('settings',{accent:'en-US',listenAccent:'mix',rate:1,autoSpeak:false,goal:20})
 };
+
 ['p2','p3','p4'].forEach(function(p){ if(!S.listen[p]) S.listen[p]={}; });
+/* SRS (SM-2) */
+if(!S.srs) S.srs={};
+if(!S.settings.newPerDay) S.settings.newPerDay=10;
+if(!S.settings.dictSrc) S.settings.dictSrc='mix';
+if(!S.dict) S.dict={total:0,correctWords:0,totalWords:0,missed:{},rounds:0};
+function todayStr(){ return dayKey(); }
+function migrateSRS(){
+  if(S.settings.srsMigrated) return;
+  Object.keys(S.marks||{}).forEach(function(w){
+    if(S.srs[w]) return;
+    if(S.marks[w]==='known') S.srs[w]={ease:2.8, interval:7, reps:2, due:todayStr(), lapses:0};
+    else if(S.marks[w]==='unsure') S.srs[w]={ease:2.3, interval:0, reps:0, due:todayStr(), lapses:1};
+  });
+  Object.keys(S.wrong||{}).forEach(function(w){
+    if(!BYWORD[w]) return;
+    if(!S.srs[w] || S.srs[w].due>todayStr()) S.srs[w]={ease:2.2, interval:0, reps:0, due:todayStr(), lapses:(S.srs[w]&&S.srs[w].lapses)||1};
+  });
+  S.settings.srsMigrated=true; save('srs'); save('settings');
+}
+function srsGet(w){ return S.srs[w] || {ease:2.5, interval:0, reps:0, due:todayStr(), lapses:0}; }
+function addDays(iso, n){ var d=new Date(iso+'T12:00:00'); d.setDate(d.getDate()+n); return dayKey(d); }
+function srsSchedule(w, grade){
+  /* grade 1 again, 2 hard, 3 good, 4 easy */
+  var c=srsGet(w);
+  if(grade===1){ c.reps=0; c.lapses=(c.lapses||0)+1; c.interval=0; c.due=todayStr(); c.ease=Math.max(1.3,(c.ease||2.5)-0.2); }
+  else {
+    if(c.reps===0) c.interval = grade===2?1:1;
+    else if(c.reps===1) c.interval = grade===2?3: (grade===4?4:3);
+    else {
+      var mult=c.ease||2.5;
+      if(grade===2) mult=Math.max(1.3, mult-0.15);
+      if(grade===4) mult=mult+0.15;
+      c.interval=Math.max(1, Math.round(c.interval*mult));
+    }
+    c.reps=(c.reps||0)+1;
+    if(grade===3) c.ease=(c.ease||2.5)+0.0;
+    if(grade===4) c.ease=(c.ease||2.5)+0.15;
+    if(grade===2) c.ease=Math.max(1.3,(c.ease||2.5)-0.15);
+    c.due=addDays(todayStr(), c.interval);
+  }
+  S.srs[w]=c; save('srs');
+  if(grade>=3){ S.marks[w]='known'; }
+  else if(grade===1){ S.marks[w]='unsure'; }
+  save('marks'); bump();
+  return c;
+}
+function dueWords(){
+  var t=todayStr();
+  return WORDS.filter(function(w){ var c=S.srs[w]; return c && c.due<=t; });
+}
+function newWordsToday(){
+  var t=todayStr();
+  var introduced=S.settings._newIntroduced && S.settings._newIntroduced[t] || 0;
+  return {cap:S.settings.newPerDay||10, used:introduced};
+}
+function introduceNew(w){
+  var t=todayStr();
+  if(!S.settings._newIntroduced) S.settings._newIntroduced={};
+  S.settings._newIntroduced[t]=(S.settings._newIntroduced[t]||0)+1;
+  if(!S.srs[w]) S.srs[w]={ease:2.5, interval:0, reps:0, due:t, lapses:0};
+  save('srs'); save('settings');
+}
+function reviewQueue(){
+  var due=dueWords();
+  var t=todayStr(); var info=newWordsToday();
+  var unseen=WORDS.filter(function(w){
+    if(V.level==='860plus' && w.lv==='730') return false;
+    if(V.level!=='all' && V.level!=='860plus' && w.lv!==V.level) return false;
+    return !S.srs[w];
+  });
+  var need=Math.max(0, info.cap-info.used);
+  var news=unseen.slice(0, need);
+  // prefer unsure/wrong first among due
+  due.sort(function(a,b){ return (S.wrong[b.w]||0)-(S.wrong[a.w]||0); });
+  return due.concat(news);
+}
+function updateDueBadge(){
+  var n=dueWords().length; var el=$('#dueBadge');
+  if(!el) return;
+  if(n>0){ el.hidden=false; el.textContent=String(n); } else el.hidden=true;
+}
+
+
 function save(k){ store.set(k,S[k]); }
 function bump(){ var k=dayKey(); S.days[k]=(S.days[k]||0)+1; save('days'); }
 
@@ -37,6 +121,7 @@ var WORDS=[]; var BYWORD={}; var WORD_SLUG={};
 function slugify(w){ return String(w).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,''); }
 THEMES.forEach(function(t){ t.words.forEach(function(a){ var w={w:a[0],pos:a[1],zh:a[2],ex:a[3],exZh:a[4],lv:a[5],note:a[6],theme:t.id,themeName:t.name,icon:t.icon}; WORDS.push(w); BYWORD[w.w]=w; WORD_SLUG[w.w]=slugify(w.w); }); });
 var L = (typeof LDATA!=='undefined') ? LDATA : {p2:[],p3:[],p4:[]};
+migrateSRS();
 var AUDIO_MANIFEST = null; // loaded async from audio/manifest.json
 fetch('audio/manifest.json').then(function(r){ return r.ok ? r.json() : null; }).then(function(m){ AUDIO_MANIFEST=m; }).catch(function(){});
 
@@ -159,13 +244,14 @@ function castVoices(roles, seed){
 
 /* ---------- 狀態 ---------- */
 var cur = { tab:'home' };
-var V = { mode:'cards', theme:'all', level:'all', status:'all', idx:0, flipped:false, order:null, orderKey:'', quiz:null, quizDir:'mix', listOpen:{} };
+var V = { mode:'cards', theme:'all', level:'860plus', status:'all', idx:0, flipped:false, order:null, orderKey:'', quiz:null, quizDir:'mix', listOpen:{} };
 var LS = { part:null, idx:0, ans:{}, submitted:false, playingSeg:-1 };
 
 function pool(){
   return WORDS.filter(function(w){
     if(V.theme!=='all' && w.theme!==V.theme) return false;
-    if(V.level!=='all' && w.lv!==V.level) return false;
+    if(V.level==='860plus'){ if(w.lv==='730') return false; }
+    else if(V.level!=='all' && w.lv!==V.level) return false;
     var m=S.marks[w.w];
     if(V.status==='known' && m!=='known') return false;
     if(V.status==='unsure' && m!=='unsure') return false;
@@ -203,6 +289,9 @@ function viewHome(){
   h+='<div class="card hero"><div class="row" style="justify-content:space-between"><div><div class="muted small">目標分數</div><div style="font-size:28px;font-weight:900">TOEIC 900+</div></div><div style="text-align:right"><div class="muted small">連續學習</div><div style="font-size:28px;font-weight:900">🔥 '+streak()+' 天</div></div></div>';
   h+='<div class="muted small" style="margin-top:10px">今日練習 '+today+' / '+goal+' 次</div><div class="progressline" style="background:rgba(255,255,255,.3)"><i style="width:'+Math.min(100,pct(today,goal))+'%;background:#fff"></i></div>';
   h+='<div class="muted small" style="margin-top:6px">已熟悉單字 '+k+' / '+WORDS.length+'</div></div>';
+  var dueN=dueWords().length;
+  h+='<div class="card" style="border:1.5px solid var(--primary)"><div class="row" style="justify-content:space-between;align-items:center"><div><h3 style="margin:0">📅 今日複習</h3><div class="small muted">到期 '+dueN+' 張・今日新字 '+(newWordsToday().used)+'/'+(newWordsToday().cap)+'</div></div><button class="btn" data-act="srsstart"'+(dueN||newWordsToday().used<newWordsToday().cap?'':' disabled')+'>開始複習</button></div></div>';
+  h+='<div class="preset"><button class="chip'+(V.level==='860plus'?' on':'')+'" data-act="go" data-tab="vocab" data-mode="cards" data-level="860plus">⚡ 衝刺 860+</button><button class="chip" data-act="go" data-tab="dict">✍️ 逐句聽寫</button></div>';
   h+='<div class="quick" style="margin-bottom:14px">';
   h+='<button data-act="go" data-tab="vocab" data-mode="cards"><div class="qi">🃏</div><div class="qt">單字字卡</div><div class="qs">'+WORDS.length+' 個中高階商務單字</div></button>';
   h+='<button data-act="go" data-tab="vocab" data-mode="quiz"><div class="qi">✍️</div><div class="qt">單字測驗</div><div class="qs">每輪 10 題・英⇄中</div></button>';
@@ -222,7 +311,7 @@ function viewHome(){
 function vocabFilters(){
   var h='<div class="filters">';
   h+='<div class="chips">'+[['all','全部主題']].concat(THEMES.map(function(t){return [t.id,t.icon+' '+t.name];})).map(function(x){ return '<button class="chip'+(V.theme===x[0]?' on':'')+'" data-act="vf" data-k="theme" data-v="'+x[0]+'">'+esc(x[1])+'</button>'; }).join('')+'</div>';
-  h+='<div class="chips">'+[['all','全部難度'],['730','730'],['860','860'],['900','900+']].map(function(x){ return '<button class="chip'+(V.level===x[0]?' on':'')+'" data-act="vf" data-k="level" data-v="'+x[0]+'">'+(x[0]!=='all'?'<span class="lv lv'+x[0]+'" style="margin-right:4px">●</span>':'')+x[1]+'</button>'; }).join('')+
+  h+='<div class="chips">'+[['all','全部難度'],['860plus','⚡ 衝刺 860+'],['730','730'],['860','860'],['900','900+']].map(function(x){ return '<button class="chip'+(V.level===x[0]?' on':'')+'" data-act="vf" data-k="level" data-v="'+x[0]+'">'+(x[0]!=='all'&&x[0]!=='860plus'?'<span class="lv lv'+x[0]+'" style="margin-right:4px">●</span>':'')+x[1]+'</button>'; }).join('')+
      [['all','全部狀態'],['new','未標記'],['unsure','不熟'],['known','已熟悉'],['review','錯題＋不熟']].map(function(x){ return '<button class="chip'+(V.status===x[0]?' on':'')+'" data-act="vf" data-k="status" data-v="'+x[0]+'">'+x[1]+'</button>'; }).join('')+'</div>';
   h+='</div>';
   return h;
@@ -255,8 +344,13 @@ function viewCards(P){
   h+='<div class="face back"><div class="facetop"><div><span class="en" style="font-weight:800;font-size:20px">'+esc(w.w)+'</span> <span class="muted en">'+esc(w.pos)+'</span></div><button class="iconbtn" data-act="saycard" data-w="'+esc(w.w)+'" aria-label="發音（單字＋例句）">🔊</button></div>';
   h+='<div class="meaning">'+esc(w.zh)+'</div><div class="ex"><div class="e en">'+esc(w.ex)+'</div><div class="muted small" style="margin-top:4px">'+esc(w.exZh)+'</div></div>'+(w.note?'<div class="note">💡 '+esc(w.note)+'</div>':'')+'</div>';
   h+='</div></div>';
-  h+='<div class="markbar"><button class="btn unsure'+(m==='unsure'?' on':'')+'" data-act="mark" data-w="'+esc(w.w)+'" data-v="unsure">😵 不熟</button><button class="btn known'+(m==='known'?' on':'')+'" data-act="mark" data-w="'+esc(w.w)+'" data-v="known">✅ 已熟悉</button></div>';
-  h+='<div class="cardnav"><button class="btn line" data-act="prev">← 上一張</button><button class="btn" data-act="next">下一張 →</button></div>';
+  h+='<div class="srs-btns">'+
+    '<button class="btn bad" data-act="srs" data-w="'+esc(w.w)+'" data-g="1">忘記<small>再看一次</small></button>'+
+    '<button class="btn line" data-act="srs" data-w="'+esc(w.w)+'" data-g="2">模糊<small>較難</small></button>'+
+    '<button class="btn ghost" data-act="srs" data-w="'+esc(w.w)+'" data-g="3">記得<small>不錯</small></button>'+
+    '<button class="btn ok" data-act="srs" data-w="'+esc(w.w)+'" data-g="4">很熟<small>簡單</small></button></div>';
+  h+='<div class="cardnav" style="margin-top:10px"><button class="btn line" data-act="prev">← 上一張</button><button class="btn" data-act="next">下一張 →</button></div>';
+  var sc=srsGet(w.w); h+='<div class="small muted" style="text-align:center;margin-top:8px">SRS：間隔 '+(sc.interval||0)+' 天・下次 '+esc(sc.due)+'・ease '+(sc.ease||2.5).toFixed(2)+'</div>';
   h+='<div class="row small muted" style="margin-top:12px;justify-content:center"><label><input type="checkbox" data-act="autospeak" '+(S.settings.autoSpeak?'checked':'')+'> 切換卡片時自動發音</label>　口音：'+accentSelect('accent')+'</div>';
   return h;
 }
@@ -397,7 +491,7 @@ function viewListenItem(){
     h+='<div class="qblock"><div class="qt">'+(p==='p2'?'🎯 '+q.q:'<span class="en">'+(qi+1)+'. '+esc(q.q)+'</span>')+'</div>';
     q.o.forEach(function(o,i){
       var cls='opt'; if(LS.submitted){ if(i===q.a) cls+=' right'; else if(i===pick) cls+=' wrong'; } else if(i===pick) cls+=' sel';
-      h+='<button class="'+cls+'" data-act="lpick" data-q="'+qi+'" data-i="'+i+'"'+(LS.submitted?' disabled':'')+'><span class="k">'+LETTERS[i]+'</span><span class="en">'+(p==='p2'? (LS.submitted?esc(o||it.o[i]):'('+LETTERS[i]+')') : esc(o))+'</span></button>';
+      h+='<button class="'+cls+'" data-act="lpick" data-q="'+qi+'" data-i="'+i+'"'+(LS.submitted?' disabled':'')+'><span class="k">'+LETTERS[i]+'</span><span class="en">'+(p==='p2'? (LS.submitted?esc(it.o[i]):'') : esc(o))+'</span></button>';
     });
     if(LS.submitted) h+='<div class="explain">'+(pick===q.a?'✅ 答對！':'❌ 正確答案是 ('+LETTERS[q.a]+')。')+' '+esc(q.e)+'</div>';
     h+='</div>';
@@ -447,7 +541,9 @@ function viewProgress(){
   // 主題
   h+='<div class="card"><h3>🗂️ 各主題熟悉度</h3>'+THEMES.map(function(t){ var kn=t.words.filter(function(a){return S.marks[a[0]]==='known';}).length; return '<div style="margin-top:8px"><div class="row" style="justify-content:space-between"><span class="small">'+t.icon+' '+t.name+'</span><span class="small muted">'+kn+'/'+t.words.length+'</span></div><div class="progressline"><i style="width:'+pct(kn,t.words.length)+'%"></i></div></div>'; }).join('')+'</div>';
   // 聽力
-  h+='<div class="card"><h3>🎧 聽力</h3>'+['p2','p3','p4'].map(function(p){ var s=ls[p]; return '<div class="setrow"><span>'+PARTS[p].name+'</span><span class="small muted">完成 '+s.items+'/'+L[p].length+'・正確率 '+(s.t?pct(s.c,s.t)+'%':'—')+'</span></div>'; }).join('')+'</div>';
+  var dueN=dueWords().length; h+='<div class="card"><h3>🧠 間隔重複 (SRS)</h3><div class="small muted">到期 '+dueN+'・已建立卡片 '+Object.keys(S.srs).length+'・每日新字上限 '+ (S.settings.newPerDay||10)+'</div><div class="setrow"><span>每日新字</span><select data-act="setsel" data-k="newPerDay">'+[5,10,15,20,30].map(function(g){return '<option value="'+g+'"'+(S.settings.newPerDay===g?' selected':'')+'>'+g+'</option>';}).join('')+'</select></div><button class="btn block" style="margin-top:8px" data-act="srsstart">開始今日複習</button></div>';
+h+='<div class="card"><h3>✍️ 聽寫</h3><div class="small muted">完成 '+S.dict.rounds+' 句・詞正確率 '+(S.dict.totalWords?pct(S.dict.correctWords,S.dict.totalWords)+'%':'—')+'・錯句本 '+Object.keys(S.dict.missed||{}).length+'</div></div>';
+h+='<div class="card"><h3>🎧 聽力</h3>'+['p2','p3','p4'].map(function(p){ var s=ls[p]; return '<div class="setrow"><span>'+PARTS[p].name+'</span><span class="small muted">完成 '+s.items+'/'+L[p].length+'・正確率 '+(s.t?pct(s.c,s.t)+'%':'—')+'</span></div>'; }).join('')+'</div>';
   // 設定
   var a=TTS.accents();
   h+='<div class="card"><h3>⚙️ 設定</h3>';
@@ -469,9 +565,11 @@ function render(keepScroll){
   if(cur.tab==='home') h=viewHome();
   else if(cur.tab==='vocab') h=viewVocab();
   else if(cur.tab==='listen') h= LS.part? viewListenItem() : viewListenHome();
+  else if(cur.tab==='dict') h=viewDict();
   else h=viewProgress();
   v.innerHTML=h;
-  document.querySelectorAll('nav.tabs button').forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-tab')===cur.tab); });
+  document.querySelectorAll('nav.tabs button').forEach(function(b){ var on=b.getAttribute('data-tab')===cur.tab; b.classList.toggle('on', on); b.setAttribute('aria-selected', on?'true':'false'); });
+  updateDueBadge();
   $('#streakPill').textContent='🔥 '+streak();
   if(keepScroll) window.scrollTo(0,y); else window.scrollTo(0,0);
 }
@@ -480,14 +578,14 @@ function openPart(p, idx){ LS.part=p; LS.idx=idx||0; LS.ans={}; LS.submitted=fal
 
 function routeFromHash(){
   var hh=(location.hash||'').replace('#','').split('/');
-  var tab=hh[0]; if(['home','vocab','listen','progress'].indexOf(tab)<0) tab='home';
+  var tab=hh[0]; if(['home','vocab','listen','dict','progress'].indexOf(tab)<0) tab='home';
   if(tab==='vocab' && hh[1] && ['cards','quiz','list','review'].indexOf(hh[1])>=0) V.mode=hh[1];
   if(tab==='listen' && hh[1] && L[hh[1]]) openPart(hh[1], parseInt(hh[2]||'0',10)||0);
   cur.tab=tab;
 }
 
 /* ---------- 事件 ---------- */
-function setMark(w, v){ if(S.marks[w]===v) delete S.marks[w]; else S.marks[w]=v; save('marks'); bump(); }
+function setMark(w, v){ if(S.marks[w]===v) delete S.marks[w]; else S.marks[w]=v; save('marks'); if(v==='unsure'){ S.srs[w]={ease:2.3,interval:0,reps:0,due:todayStr(),lapses:(srsGet(w).lapses||0)+1}; save('srs'); } if(v==='known'){ var c=srsGet(w); if(!c.interval){ c.interval=3; c.reps=Math.max(c.reps,1); c.due=addDays(todayStr(),3); S.srs[w]=c; save('srs'); } } bump(); }
 function cardMove(d){ var P=pool(); var order=cardOrder(P); V.idx=(V.idx+d+order.length)%order.length; V.flipped=false; bump(); render(true); if(S.settings.autoSpeak) AP.playWordCard(order[V.idx]); }
 
 document.addEventListener('click', function(ev){
@@ -496,9 +594,45 @@ document.addEventListener('click', function(ev){
   if(el.tagName==='SELECT' || (el.tagName==='INPUT')) return;
   switch(a){
     case 'tab': if(d('tab')==='listen' && cur.tab==='listen' && LS.part){ LS.part=null; } go(d('tab')); break;
-    case 'go': if(d('mode')){ V.mode=d('mode'); V.quiz=null; } if(d('part')) openPart(d('part'),0); go(d('tab')); break;
+    case 'go': if(d('mode')){ V.mode=d('mode'); V.quiz=null; } if(d('level')) V.level=d('level'); if(d('part')) openPart(d('part'),0); go(d('tab')); break;
     case 'say': ev.stopPropagation(); TTS.say(d('text')); break;
     case 'saycard': ev.stopPropagation(); AP.playWordCard(d('w')); break;
+
+    case 'dsrc': D.src=d('v'); buildDictQueue(); render(); break;
+    case 'ddiff': D.diff=d('v'); buildDictQueue(); render(); break;
+    case 'dplay': if(AP.playing||TTS.playing) AP.stop(); else playDict(); break;
+    case 'dreplay': playDict(); break;
+    case 'dcheck':
+      var inp=$('#dictIn'); D.input=inp?inp.value:'';
+      var curD=D.queue[D.i]; var r=diffWords(curD.text, D.input);
+      D.last=r; D.revealed=true;
+      S.dict.rounds++; S.dict.totalWords+=r.total; S.dict.correctWords+=r.ok;
+      if(r.acc<85){ S.dict.missed[curD.id]=(S.dict.missed[curD.id]||0)+1; }
+      else if(S.dict.missed[curD.id]){ delete S.dict.missed[curD.id]; }
+      save('dict'); bump(); render(true); break;
+    case 'dnext': D.i=(D.i+1)%Math.max(1,D.queue.length); D.revealed=false; D.last=null; D.input=''; render(); setTimeout(function(){ var el=$('#dictIn'); if(el) el.focus(); },50); break;
+    case 'dmiss':
+      D.queue=Object.keys(S.dict.missed||{}).map(function(id){ return (DICTATION||[]).find(function(x){return x.id===id;}); }).filter(Boolean);
+      if(!D.queue.length){ toast('沒有錯句'); break; }
+      D.i=0; D.revealed=false; render(); break;
+
+
+    case 'srs':
+      var ww=d('w'); if(!S.srs[ww]) introduceNew(ww);
+      srsSchedule(ww, parseInt(d('g'),10));
+      toast(['','已排入重看','間隔稍短','已排程複習','太棒了，拉長間隔'][parseInt(d('g'),10)]||'已記錄');
+      // auto advance
+      if(V.mode==='cards'){ cardMove(1); } else render(true);
+      break;
+    case 'srsstart':
+      V.mode='cards'; V.status='all'; V.theme='all';
+      if(V.level==='all') V.level='860plus';
+      var q=reviewQueue();
+      if(!q.length){ toast('目前沒有到期單字'); break; }
+      V.order=q.map(function(w){return w.w;}); V.orderKey='srs-'+todayStr(); V.idx=0; V.flipped=false;
+      q.forEach(function(w){ if(!S.srs[w.w]) introduceNew(w.w); });
+      go('vocab'); break;
+
     case 'vmode': V.mode=d('v'); if(V.mode!=='quiz') V.quiz=null; go('vocab'); break;
     case 'vf': V[d('k')]=d('v'); V.idx=0; V.flipped=false; render(true); break;
     case 'vreset': V.theme='all'; V.level='all'; V.status='all'; render(); break;
@@ -518,7 +652,7 @@ document.addEventListener('click', function(ev){
     case 'qpick':
       var Q=V.quiz, q=Q.qs[Q.i]; if(q.pick>=0) break; q.pick=parseInt(d('i'),10);
       var ok=q.pick===q.ans; S.quiz.total++; if(ok) S.quiz.correct++;
-      if(!ok){ S.wrong[q.w]=(S.wrong[q.w]||0)+1; save('wrong'); }
+      if(!ok){ S.wrong[q.w]=(S.wrong[q.w]||0)+1; save('wrong'); S.srs[q.w]={ease:2.2, interval:0, reps:0, due:todayStr(), lapses:(srsGet(q.w).lapses||0)+1}; save('srs'); }
       else if(Q.review && S.wrong[q.w]){ delete S.wrong[q.w]; save('wrong'); }
       save('quiz'); bump(); render(true); break;
     case 'qnext': if(V.quiz.i+1<V.quiz.qs.length){ V.quiz.i++; render(); } else { V.quiz.done=true; var r=V.quiz.qs.filter(function(x){return x.pick===x.ans;}).length; S.quiz.rounds++; if(V.quiz.qs.length===10) S.quiz.best=Math.max(S.quiz.best,r); save('quiz'); render(); } break;
@@ -541,14 +675,14 @@ document.addEventListener('click', function(ev){
     case 'testvoice': TTS.say('Welcome to your TOEIC practice. The quarterly report is due on Friday.'); break;
     case 'reset':
       if(confirm('確定要重設所有學習紀錄嗎？此動作無法復原。')){
-        S.marks={}; S.wrong={}; S.seen={}; S.quiz={total:0,correct:0,rounds:0,best:0}; S.listen={p2:{},p3:{},p4:{}}; S.days={};
-        ['marks','wrong','seen','quiz','listen','days'].forEach(save); V.quiz=null; render(); toast('已重設所有紀錄');
+        S.marks={}; S.wrong={}; S.seen={}; S.quiz={total:0,correct:0,rounds:0,best:0}; S.listen={p2:{},p3:{},p4:{}}; S.days={}; S.srs={}; S.dict={total:0,correctWords:0,totalWords:0,missed:{},rounds:0}; S.settings.srsMigrated=false; S.settings._newIntroduced={};
+        ['marks','wrong','seen','quiz','listen','days','srs','dict','settings'].forEach(save); V.quiz=null; render(); toast('已重設所有紀錄');
       } break;
   }
 });
 document.addEventListener('change', function(ev){
   var el=ev.target; var a=el.getAttribute('data-act');
-  if(a==='setsel'){ var k=el.getAttribute('data-k'); S.settings[k]= k==='goal'? parseInt(el.value,10) : el.value; save('settings'); if(k==='accent') TTS.say('Hello, this is my accent.'); render(true); }
+  if(a==='setsel'){ var k=el.getAttribute('data-k'); S.settings[k]= (k==='goal'||k==='newPerDay')? parseInt(el.value,10) : el.value; save('settings'); if(k==='accent') TTS.say('Hello, this is my accent.'); render(true); }
   if(a==='autospeak'){ S.settings.autoSpeak=el.checked; save('settings'); }
 });
 document.addEventListener('keydown', function(ev){
@@ -563,10 +697,100 @@ var tx=null, ty=null;
 document.addEventListener('touchstart', function(e){ if(!e.target.closest('#flash')) { tx=null; return; } tx=e.touches[0].clientX; ty=e.touches[0].clientY; }, {passive:true});
 document.addEventListener('touchend', function(e){ if(tx===null) return; var dx=e.changedTouches[0].clientX-tx, dy=e.changedTouches[0].clientY-ty; tx=null; if(Math.abs(dx)>60 && Math.abs(dx)>Math.abs(dy)*1.5){ V.suppressFlip=true; cardMove(dx<0?1:-1); } }, {passive:true});
 document.addEventListener('click', function(e){ if(V.suppressFlip && e.target.closest('#flash')){ V.suppressFlip=false; e.stopImmediatePropagation(); e.preventDefault(); } else V.suppressFlip=false; }, true);
+document.addEventListener('input', function(ev){ if(ev.target && ev.target.id==='dictIn') D.input=ev.target.value; });
 document.addEventListener('visibilitychange', function(){ if(document.hidden && (AP.playing||TTS.playing)) AP.stop(); });
 
 routeFromHash();
 render();
 window.addEventListener('hashchange', function(){ var before=location.hash; routeFromHash(); render(); });
-window.__TOEIC = {WORDS:WORDS, L:L, TTS:TTS, AP:AP, AUDIO_MANIFEST:function(){return AUDIO_MANIFEST;}};
+
+/* ---------- 聽寫 Dictation ---------- */
+var D = { src:'mix', diff:'all', queue:[], i:0, revealed:false, last:null, input:'' };
+
+function normDict(s){
+  s=String(s||'').toLowerCase();
+  s=s.replace(/[’`]/g,"'");
+  var map={"i'm":"i am","you're":"you are","he's":"he is","she's":"she is","it's":"it is","we're":"we are","they're":"they are","isn't":"is not","aren't":"are not","wasn't":"was not","weren't":"were not","don't":"do not","doesn't":"does not","didn't":"did not","can't":"cannot","couldn't":"could not","wouldn't":"would not","shouldn't":"should not","won't":"will not","haven't":"have not","hasn't":"has not","hadn't":"had not","let's":"let us","that's":"that is","there's":"there is","what's":"what is","who's":"who is","i'll":"i will","we'll":"we will","you'll":"you will","they'll":"they will","i've":"i have","we've":"we have","you've":"you have","they've":"they have","i'd":"i would","we'd":"we would","you'd":"you would","they'd":"they would"};
+  // tokenize
+  s=s.replace(/[^a-z0-9'\s]/g,' ');
+  s=s.replace(/\s+/g,' ').trim();
+  return s.split(' ').filter(Boolean).map(function(w){ return map[w]||w; }).join(' ').split(' ').filter(Boolean);
+}
+
+function diffWords(truth, guess){
+  var T=normDict(truth), G=normDict(guess);
+  // LCS-based alignment
+  var n=T.length, m=G.length;
+  var dp=[]; for(var i=0;i<=n;i++){ dp[i]=[]; for(var j=0;j<=m;j++) dp[i][j]=0; }
+  for(i=1;i<=n;i++) for(j=1;j<=m;j++) dp[i][j]= T[i-1]===G[j-1] ? dp[i-1][j-1]+1 : Math.max(dp[i-1][j], dp[i][j-1]);
+  var ops=[]; i=n; j=m;
+  while(i>0||j>0){
+    if(i>0&&j>0&&T[i-1]===G[j-1]){ ops.push({t:'ok', w:T[i-1]}); i--; j--; }
+    else if(j>0&&(i===0||dp[i][j-1]>=dp[i-1][j])){ ops.push({t:'bad', w:G[j-1]}); j--; }
+    else { ops.push({t:'miss', w:T[i-1]}); i--; }
+  }
+  ops.reverse();
+  var ok=ops.filter(function(o){return o.t==='ok';}).length;
+  var acc = n? Math.round(ok*100/n) : 0;
+  return {ops:ops, acc:acc, ok:ok, total:n};
+}
+
+function dictPool(){
+  var all=(typeof DICTATION!=='undefined'?DICTATION:[]);
+  return all.filter(function(d){
+    if(D.src!=='mix' && d.src!==D.src) return false;
+    if(D.diff==='860plus'){ if(d.diff==='730') return false; }
+    else if(D.diff!=='all' && d.diff!==D.diff) return false;
+    return true;
+  });
+}
+function buildDictQueue(){
+  var p=dictPool();
+  // prioritize missed
+  var missed=Object.keys(S.dict.missed||{}).filter(function(id){ return p.some(function(d){return d.id===id;}); });
+  var rest=p.filter(function(d){ return missed.indexOf(d.id)<0; });
+  var q=shuffle(missed.map(function(id){ return p.find(function(d){return d.id===id;}); }).filter(Boolean).concat(shuffle(rest)));
+  D.queue=q; D.i=0; D.revealed=false; D.last=null; D.input='';
+}
+
+function viewDict(){
+  if(!D.queue.length) buildDictQueue();
+  if(!D.queue.length) return '<div class="card empty"><div class="big">✍️</div>沒有聽寫句子（資料尚未載入）。</div>';
+  if(D.i>=D.queue.length) D.i=0;
+  var d=D.queue[D.i];
+  var h='<div class="card"><h2>✍️ 逐句聽寫</h2><div class="small muted">先盲聽一句，打出你聽到的內容，再核對。支援 Enter 送出／下一題，R 重播。</div>';
+  h+='<div class="filterlabel" style="margin-top:10px">來源</div><div class="seg">'+[['mix','混合'],['vocab','單字例句'],['p2','Part 2'],['p3','Part 3'],['p4','Part 4']].map(function(x){return '<button class="'+(D.src===x[0]?'on':'')+'" data-act="dsrc" data-v="'+x[0]+'">'+x[1]+'</button>';}).join('')+'</div>';
+  h+='<div class="filterlabel">難度</div><div class="seg">'+[['all','全部'],['860plus','860+'],['730','730'],['860','860'],['900','900']].map(function(x){return '<button class="'+(D.diff===x[0]?'on':'')+'" data-act="ddiff" data-v="'+x[0]+'">'+x[1]+'</button>';}).join('')+'</div>';
+  h+='</div>';
+  h+='<div class="card"><div class="row" style="justify-content:space-between"><div class="small muted">第 '+(D.i+1)+' / '+D.queue.length+'・'+esc(d.src)+(d.word?'・'+esc(d.word):'')+'</div><span class="tag">'+esc(String(d.diff))+'</span></div>';
+  h+='<div class="player" style="margin-top:10px"><div class="playmain'+(AP.playing?' playing-anim':'')+'"><button class="playbtn'+(AP.playing?' playing':'')+'" data-act="dplay" aria-label="播放">'+(AP.playing?'■':'▶')+'</button><div style="flex:1"><div class="wave"><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="status">'+(AP.playing?'播放中…':'盲聽：先按播放')+'</div></div></div>';
+  h+='<div class="row" style="margin-top:10px"><button class="btn line" data-act="dreplay">↻ 重播</button><button class="btn line" data-act="rate" data-v="0.75">0.75x</button><button class="btn line" data-act="rate" data-v="1">1x</button></div></div>';
+  if(!D.revealed){
+    h+='<label class="small muted">你的答案</label><textarea class="dict-input" id="dictIn" rows="3" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="輸入你聽到的句子…">'+esc(D.input||'')+'</textarea>';
+    h+='<button class="btn block" style="margin-top:10px" data-act="dcheck">核對答案 ✓</button>';
+  } else {
+    var r=D.last;
+    h+='<div class="acc-ring">'+r.acc+'%</div><div class="small muted" style="text-align:center">詞彙正確 '+r.ok+' / '+r.total+'</div>';
+    h+='<div class="card" style="margin-top:8px"><div class="small muted">逐字比對</div><div class="diff en">'+r.ops.map(function(o){ return '<span class="'+o.t+'">'+esc(o.w)+'</span>'; }).join(' ')+'</div>';
+    h+='<div class="ex" style="margin-top:10px"><div class="e en">'+esc(d.text)+'</div><div class="muted small">'+esc(d.zh||'')+'</div></div></div>';
+    h+='<button class="btn block" data-act="dnext">下一句 →</button>';
+  }
+  var missN=Object.keys(S.dict.missed||{}).length;
+  h+='<div class="card small muted">累計聽寫 '+S.dict.rounds+' 句・詞正確率 '+(S.dict.totalWords?pct(S.dict.correctWords,S.dict.totalWords)+'%':'—')+'・待重練 '+missN+' 句<button class="mini" style="margin-left:8px" data-act="dmiss"'+(missN?'':' disabled')+'>只練錯句</button></div>';
+  return h;
+}
+
+function playDict(){
+  if(!D.queue.length) return;
+  var d=D.queue[D.i];
+  var path=(AUDIO_MANIFEST&&AUDIO_MANIFEST.dict&&AUDIO_MANIFEST.dict[d.id])||('audio/dict/'+d.id+'.mp3');
+  AP.rate=S.settings.rate||1;
+  AP._playUrl(path, function(){ var s=$('#pstatus'); }, function(){
+    if(!TTS.ok){ toast('音檔載入失敗'); return; }
+    TTS.say(d.text);
+  });
+}
+
+
+window.__TOEIC = {WORDS:WORDS, L:L, TTS:TTS, AP:AP, AUDIO_MANIFEST:function(){return AUDIO_MANIFEST;}, srsSchedule:srsSchedule, srsGet:srsGet, dueWords:dueWords, diffWords:diffWords, normDict:normDict, D:D, S:S};
 })();
