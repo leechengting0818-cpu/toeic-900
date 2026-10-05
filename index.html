@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>多益 900 衝刺｜單字・聽力</title>
+<meta name="description" content="多益 TOEIC 900 分衝刺：中高階商務單字字卡、測驗、錯題本，以及 Part 2–4 聽力練習（預錄神經語音）。">
+<meta name="theme-color" content="#4f46e5">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="多益900">
+<link rel="apple-touch-icon" sizes="180x180" href="icon180.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon192.png">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="logo">900</div>
+  <div class="brand">多益 900 衝刺<small>單字・聽力・進度</small></div>
+  <div class="spacer"></div>
+  <span class="pill" id="streakPill" title="連續學習天數">🔥 0</span>
+</header>
+<nav class="tabs" aria-label="主選單">
+  <button data-act="tab" data-tab="home"><span class="ic">🏠</span><span>首頁</span></button>
+  <button data-act="tab" data-tab="vocab"><span class="ic">📚</span><span>單字</span></button>
+  <button data-act="tab" data-tab="listen"><span class="ic">🎧</span><span>聽力</span></button>
+  <button data-act="tab" data-tab="progress"><span class="ic">📊</span><span>進度</span></button>
+</nav>
+<main id="view"></main>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<noscript><p style="padding:20px">此 App 需要啟用 JavaScript。</p></noscript>
+<script src="data/vocab.js"></script>
+<script src="data/listen.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
